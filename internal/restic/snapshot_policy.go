@@ -165,15 +165,6 @@ func findLatestTimestamp(list Snapshots) time.Time {
 	return latest
 }
 
-func findParentSnapshot(list Snapshots, id ID) *Snapshot {
-	for _, sn := range list {
-		if sn.ID().Equal(id) {
-			return sn
-		}
-	}
-	return nil
-}
-
 // KeepReason specifies why a particular snapshot was kept, and the counters at
 // that point in the policy evaluation.
 type KeepReason struct {
@@ -234,6 +225,18 @@ func ApplyPolicy(list Snapshots, p ExpirePolicy) (keep, remove Snapshots, reason
 	}
 
 	latest := findLatestTimestamp(list)
+
+	var idMap map[ID]*Snapshot
+
+	if p.Unique {
+		idMap = make(map[ID]*Snapshot, len(list))
+		for _, cur := range list {
+			if idMap[*cur.id] != nil {
+				debug.Log("found duplicate snapshot %v with ID %v", cur.id.Str(), cur.id)
+			}
+			idMap[*cur.id] = cur
+		}
+	}
 
 	for nr, cur := range list {
 		var keepSnap bool
@@ -300,11 +303,14 @@ func ApplyPolicy(list Snapshots, p ExpirePolicy) (keep, remove Snapshots, reason
 
 		if p.Unique {
 			if cur.Parent != nil {
-				parent := findParentSnapshot(keep, *cur.Parent)
-				if parent != nil {
-					if parent.Tree == cur.Tree {
-						keepSnap = false
-					}
+				parent := idMap[*cur.Parent]
+				if parent == nil {
+					debug.Log("Inconsistent snapshot list: parent %v of snapshot %v not found in idMap", cur.Parent.Str(), cur.id.Str())
+				} else if *parent.Tree == *cur.Tree {
+					debug.Log("Same tree %v for snapshot %v and parent %v", *cur.Tree, cur.id.Str(), parent.id.Str())
+					keepSnap = false
+				} else {
+					debug.Log("Different tree %v, %v for snapshot %v and parent %v", *cur.Tree, *parent.Tree, cur.id.Str(), parent.id.Str())
 				}
 			}
 		}
